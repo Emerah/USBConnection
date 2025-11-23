@@ -689,11 +689,13 @@ extension USBConnection {
         }
 
         // Core logging function
+        #if USBCONNECTION_LOGGING
         private static func log(_ level: LogLevel, _ message: String, file: StaticString = #fileID, line: UInt = #line) {
-            #if DEBUG
             print("\(timestamp()): [\(level.rawValue)] - \(file):\(line):- \(message)")
-            #endif
         }
+        #else
+        @inline(__always) private static func log(_ level: LogLevel, _ message: String, file: StaticString = #fileID, line: UInt = #line) { }
+        #endif
 
         // MARK: - Convenience methods
         internal static func info(_ message: String, file: StaticString = #fileID, line: UInt = #line) {
