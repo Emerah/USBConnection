@@ -89,8 +89,8 @@ let task = Task {
 }
 
 // Later, when done:
-manager.endMonitoringActivity()
-await task.cancel()
+await manager.endMonitoringActivity()
+task.cancel()
 ```
 
 If the consumer finishes or cancels the stream, the actor also cleans up automatically.
