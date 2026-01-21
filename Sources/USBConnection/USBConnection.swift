@@ -12,12 +12,12 @@ import Foundation
 import IOKit
 import IOKit.usb
 
-public typealias USBService = USBConnection.USBService
+
+
 public typealias USBConnectionManager = USBConnection.USBConnectionManager
-public typealias USBConnectionNotification = USBConnection.USBConnectionNotification
-public typealias USBDeviceMatchingCriteria = USBConnection.USBConnectionManager.USBDeviceMatchingCriteria
 public typealias USBConnectionError = USBConnection.USBConnectionError
-public typealias USBConnectionStream = AsyncThrowingStream<USBConnectionNotification, Error>
+public typealias USBConnectionStream = AsyncThrowingStream<USBConnectionManager.Notification, Error>
+
 fileprivate typealias USBLogger = USBConnection.USBLogger
 
 
@@ -25,11 +25,11 @@ fileprivate typealias USBLogger = USBConnection.USBLogger
 /// - Discussion: All USBKit connection types live under this namespace to avoid polluting the global scope.
 public enum USBConnection {
     // USBConnection.USBConnectionManager
-    // USBConnection.USBConnectionManager.ConnectionEvent
-    // USBConnection.USBConnectionManager.IteratorRegistry
-    // USBConnection.USBService
-    // USBConnection.USBConnectionNotification
-    // USBConnection.USBDeviceMatchingCriteria
+    // USBConnection.USBConnectionManager.ConnectionEvent [private]
+    // USBConnection.USBConnectionManager.IteratorRegistry [private]
+    // USBConnection.USBConnectionManager.DeviceReference
+    // USBConnection.USBConnectionManagerNotification
+    // USBConnection.USBConnectionManager.DeviceMatchingCriteria
     // USBConnection.USBConnectionError
 }
 
@@ -68,7 +68,7 @@ extension USBConnection {
         /// Optional vendor/product filter applied to the matching dictionary.
         /// - Returns: Criteria restricting which devices trigger notifications, if provided.
         /// - Discussion: When provided, only USB devices matching this criteria trigger notifications.
-        private var deviceMatchingCriteria: USBDeviceMatchingCriteria?
+        private var deviceMatchingCriteria: DeviceMatchingCriteria?
         
         /// Indicates whether monitoring is currently active.
         /// - Returns: `true` when monitoring has been started and not yet ended.
@@ -78,13 +78,7 @@ extension USBConnection {
         /// Creates a connection manager with no filtering criteria.
         /// - Discussion: Use this initializer to observe all USB device events.
         public init() {}
-
-        /// Creates a connection manager restricted to specific vendor and product identifiers.
-        /// - Parameter matchingCriteria: Vendor/product identifiers used to filter devices.
-        /// - Discussion: Use this initializer when you only care about a subset of USB devices.
-        public init(matchingCriteria: USBDeviceMatchingCriteria) {
-            self.deviceMatchingCriteria = matchingCriteria
-        }
+        
     }
 }
 
@@ -93,10 +87,12 @@ extension USBConnection {
 extension USBConnection.USBConnectionManager {
 
     /// Starts monitoring USB devices and returns a stream of connection notifications.
-    /// - Returns: An async throwing stream that yields `USBConnectionNotification` events.
+    /// - Parameter matchingCriteria: Optional filtering criteria for matching devices. Pass `nil` to observe all USB devices.
+    /// - Returns: An async throwing stream that yields `Notification` events.
     /// - Throws: `USBConnectionError` when monitoring cannot be started.
     /// - Discussion: Call this from an async context to begin observing USB plug and unplug events. Keep the returned stream alive for the lifetime of your observation. Invoke `endMonitoringActivity()` when you no longer need notifications.
-    public func monitorDevices() async throws -> USBConnectionStream {
+    public func monitorDevices(matchingCriteria: DeviceMatchingCriteria? = nil) async throws -> USBConnectionStream {
+        self.deviceMatchingCriteria = matchingCriteria
         var tempContinuation: USBConnectionStream.Continuation?
         let stream = USBConnectionStream(bufferingPolicy: .bufferingOldest(64)) { tempContinuation = $0 }
 
@@ -257,13 +253,13 @@ extension USBConnection.USBConnectionManager {
         return iterator
     }
 
-    /// Builds an IOKit matching dictionary optionally filtered by vendor and product IDs.
+    /// Builds an IOKit matching dictionary optionally filtered by IDs and string properties.
     /// - Parameters:
     ///   - className: IOKit class name to match against.
-    ///   - criteria: Optional vendor/product filter.
+    ///   - criteria: Optional vendor/product and string-based filter.
     /// - Returns: A mutable matching dictionary or `nil` if creation fails.
     /// - Discussion: Provide criteria to focus monitoring on a specific device family; pass `nil` to match all USB devices.
-    private func buildMatchingDictionary(className: UnsafePointer<CChar>, criteria: USBDeviceMatchingCriteria? = nil) -> CFMutableDictionary? {
+    private func buildMatchingDictionary(className: UnsafePointer<CChar>, criteria: DeviceMatchingCriteria? = nil) -> CFMutableDictionary? {
         guard let dictionary = IOServiceMatching(className) else { 
             return nil 
         }
@@ -274,6 +270,9 @@ extension USBConnection.USBConnectionManager {
             let mDict = dictionary as NSMutableDictionary
             mDict[kUSBVendorID] = vendorID
             mDict[kUSBProductID] = productID
+            if let productName = criteria.productName { mDict[kUSBProductString] = productName as CFString }
+            if let manufacturerName = criteria.manufacturerName { mDict[kUSBVendorString] = manufacturerName as CFString }
+            if let serialNumber = criteria.serialNumber { mDict[kUSBSerialNumberString] = serialNumber as CFString }
             return mDict as CFMutableDictionary
         }
 
@@ -370,7 +369,7 @@ extension USBConnection.USBConnectionManager {
     /// - Parameters:
     ///   - iterator: Iterator populated by IOKit for the given event.
     ///   - event: Connection or disconnection marker used to build notifications.
-    /// - Discussion: Iterates through all available services, wraps them in `USBService`, and emits them through the stream while ensuring IOKit objects are released.
+    /// - Discussion: Iterates through all available services, wraps them in `DeviceReference`, and emits them through the stream while ensuring IOKit objects are released.
     private func drain(iterator: io_iterator_t, event: ConnectionEvent) {
         guard iterator != IO_OBJECT_NULL else { return }
         
@@ -382,11 +381,11 @@ extension USBConnection.USBConnectionManager {
 
             switch event {
                 case .connected:
-                    let usbService = USBService(service)
+                    let usbService = DeviceReference(service)
                     USBLogger.info("\(#function) device connected: service \(service)")
                     continuation.yield(.deviceConnected(usbService)) 
                 case .disconnected:
-                    let usbService = USBService(service, parse: false)
+                    let usbService = DeviceReference(service)
                     USBLogger.info("\(#function) device disconnected: service \(service)")
                     continuation.yield(.deviceDisconnected(usbService)) 
             }
@@ -466,9 +465,9 @@ extension USBConnection.USBConnectionManager {
 
 // MARK: - DEVICE MATCHING CRITERIA
 extension USBConnection.USBConnectionManager {
-    /// Criteria used to filter USB devices by vendor and product identifiers.
-    /// - Discussion: Supply this when constructing a `USBConnectionManager` to observe only matching devices.
-    public struct USBDeviceMatchingCriteria {
+    /// Criteria used to filter USB devices by vendor/product identifiers and optional strings.
+    /// - Discussion: Supply this to `monitorDevices(matchingCriteria:)` to observe only matching devices.
+    public struct DeviceMatchingCriteria: Sendable {
         
         /// Vendor identifier to match.
         /// - Returns: Vendor ID provided at initialization.
@@ -480,144 +479,105 @@ extension USBConnection.USBConnectionManager {
         /// - Discussion: Combined with `vendorID` to narrow matching results.
         public let productID: UInt16
         
+        /// Optional product name to match.
+        /// - Returns: Product name provided at initialization, if any.
+        /// - Discussion: When provided, this string is added to the matching dictionary.
+        public let productName: String?
+        
+        /// Optional manufacturer name to match.
+        /// - Returns: Manufacturer name provided at initialization, if any.
+        /// - Discussion: When provided, this string is added to the matching dictionary.
+        public let manufacturerName: String?
+        
+        /// Optional serial number to match.
+        /// - Returns: Serial number provided at initialization, if any.
+        /// - Discussion: When provided, this string is added to the matching dictionary.
+        public let serialNumber: String?
+        
         /// Creates a new matching criteria instance.
         /// - Parameters:
         ///   - vendorID: Vendor identifier to monitor.
         ///   - productID: Product identifier to monitor.
         /// - Discussion: Pass this to `USBConnectionManager` to receive notifications only for matching devices.
-        public init(vendorID: UInt16, productID: UInt16) {
+        public init(vendorID: UInt16, productID: UInt16, productName: String? = nil, manufacturerName: String? = nil, serialNumber: String? = nil) {
             self.vendorID = vendorID
             self.productID = productID
+            self.productName = productName
+            self.manufacturerName = manufacturerName
+            self.serialNumber = serialNumber
         }
     }
 }
 
 
-extension USBConnection {
+//extension USBConnection {
+extension USBConnection.USBConnectionManager {
 
-    /// Wraps a USB IOKit service with parsed metadata and managed lifetime semantics.
-    /// - Discussion: Use this type to inspect basic USB metadata while relying on automatic retain/release of the underlying `io_service_t`.
-    public final class USBService: Sendable {
+    /// Wraps a USB IOKit service with managed lifetime semantics.
+    /// - Discussion: Use this type to access the retained `io_service_t` and query the registry as needed.
+    public final class DeviceReference: Sendable, Equatable {
 
         /// Underlying IOKit service handle.
         private let _service: io_service_t
-        
-        /// Cached vendor identifier extracted from the registry entry.
-        private let _vendorID: UInt16?
-        
-        /// Cached product identifier extracted from the registry entry.
-        private let _productID: UInt16?
-        
-        /// Cached product name extracted from the registry entry.
-        private let _name: String?
-        
-        /// Indicates whether the underlying registry entry was parsed for metadata.
-        /// - Returns: `true` when metadata fields are populated, `false` otherwise.
-        /// - Discussion: Use this to guard access to vendor/product/name when the service was created without parsing.
-        public let isParsed: Bool
+        private let _registryID: UInt64?
         
         /// Underlying IOKit service reference, retained for the lifetime of the wrapper.
         /// - Returns: The retained `io_service_t` reference.
         /// - Important: Do not call `IOObjectRelease` on this handle; it is released in `deinit`.
         /// - Discussion: Provides direct access for callers needing low-level IOKit operations.
         public var service: io_service_t { _service }
-
-        /// USB vendor identifier if available.
-        /// - Returns: Vendor ID parsed from the device registry or `nil`.
-        /// - Discussion: Useful for filtering or logging devices without additional registry queries.
-        public var vendorID: UInt16? { _vendorID }
-
-        /// USB product identifier if available.
-        /// - Returns: Product ID parsed from the device registry or `nil`.
-        /// - Discussion: Useful for filtering or logging devices without additional registry queries.
-        public var productID: UInt16? { _productID }
-
-        /// Human-readable device name if available.
-        /// - Returns: Product string parsed from the device registry or `nil`.
-        /// - Discussion: Provides a friendly label for UI or logging contexts.
-        public var name: String? { _name }
-
-        /// Creates a service wrapper, optionally parsing common metadata.
+        
+        /// Registry entry ID for the service, if available.
+        /// - Returns: The IORegistry entry ID for this device.
+        public var registryID: UInt64? { _registryID }
+        
+        /// Creates a service wrapper and retains the service handle.
         /// - Parameters:
         ///   - service: IOKit service representing the USB device.
-        ///   - parse: Indicates whether vendor/product/name should be parsed immediately.
-        /// - Discussion: Set `parse` to `false` when parsing is unnecessary to keep construction lightweight.
-        internal init(_ service: io_service_t, parse: Bool = true) {
+        /// - Discussion: Stores the registry entry ID for convenience when available.
+        internal init(_ service: io_service_t) {
             IOObjectRetain(service)
-            USBLogger.info("\(#function) USBService retained service: \(service)")
+            USBLogger.info("\(#function) DeviceReference retained service: \(service)")
             self._service = service
-            if parse {
-                let deviceInfo = Self.deviceInfo(for: service)
-                self._vendorID = deviceInfo.vendorID
-                self._productID = deviceInfo.productID
-                self._name = deviceInfo.name
-                self.isParsed = true
-            } else {
-                self._vendorID = nil
-                self._productID = nil
-                self._name = nil
-                self.isParsed = false
-            }
+            _registryID = Self.registryIDForService(service)
+        }
+        
+        /// Fetches the registry entry ID for the given service.
+        /// - Parameter service: IOKit service representing the USB device.
+        /// - Returns: Registry entry ID when available; otherwise `nil`.
+        private static func registryIDForService(_ service: io_service_t) -> UInt64? {
+            var entryID: UInt64 = 0
+            let status = IORegistryEntryGetRegistryEntryID(service, &entryID)
+            return status == KERN_SUCCESS ? entryID : nil
         }
         
         deinit {
-            USBLogger.info("\(#function) USBService released service: \(service)")
+            USBLogger.info("\(#function) DeviceReference released service: \(service)")
             IOObjectRelease(service)
         }
         
-        /// Extracts basic USB metadata from the provided service entry.
-        /// - Parameter service: Registry entry representing the USB device.
-        /// - Returns: Tuple containing optional vendor ID, product ID, and name.
-        /// - Discussion: Centralizes registry lookups to keep initializer logic concise.
-        private static func deviceInfo(for service: io_service_t) -> (vendorID: UInt16?, productID: UInt16?, name: String?) {
-            let vendorID = property(for: service, key: kUSBVendorID as String, as: UInt16.self)
-            let productID = property(for: service, key: kUSBProductID as String, as: UInt16.self)
-            let productName = property(for: service, key: kUSBProductString as String, as: String.self)
-            return (vendorID, productID, productName)
-        }
-        
-        /// Generic helper to fetch a typed property from an IORegistry entry.
-        /// - Parameters:
-        ///   - service: Registry entry to query.
-        ///   - key: Property key to fetch.
-        ///   - type: Expected Swift type of the property.
-        /// - Returns: A typed property if present and convertible; otherwise `nil`.
-        /// - Discussion: Handles common numeric bridging scenarios encountered with IOKit properties.
-        private static func property<T>(for service: io_service_t, key: String, as type: T.Type = T.self) -> T? {
-            let cfKey = key as CFString
-            guard let cfValue = IORegistryEntryCreateCFProperty(service, cfKey, kCFAllocatorDefault, 0)?.takeRetainedValue() else {
-                return nil
-            }
-            
-            if let value = cfValue as? T { return value }
-            
-            if T.self == UInt16.self, let number = cfValue as? NSNumber {
-                return number.uint16Value as? T
-            }
-            
-            if T.self == Int.self, let number = cfValue as? NSNumber {
-                return number.intValue as? T
-            }
-            return nil
+        public static func == (lhs: USBConnectionManager.DeviceReference, rhs: USBConnectionManager.DeviceReference) -> Bool {
+            lhs.service == rhs.service
         }
     }
 }
 
 
 // MARK: - CONNECTION NOTIFICATAION
-extension USBConnection {
+//extension USBConnection {
+extension USBConnection.USBConnectionManager {
     /// Notification describing a USB connection state change.
     /// - Discussion: Delivered through `USBConnectionStream` to inform callers about device arrivals and departures.
-    public enum USBConnectionNotification: Sendable {
+    public enum Notification: Sendable {
         /// Indicates a device has been connected.
-        /// - Parameter service: Service wrapper for the connected device.
+        /// - Parameter reference: Service wrapper for the connected device.
         /// - Discussion: Use this to interrogate the connected device or retain the service for later use.
-        case deviceConnected(_ service: USBService)
+        case deviceConnected(_ reference: DeviceReference)
         
         /// Indicates a device has been disconnected.
-        /// - Parameter service: Service wrapper for the disconnected device.
+        /// - Parameter reference: Service wrapper for the disconnected device.
         /// - Discussion: Use this to perform cleanup or update UI when a device is removed.
-        case deviceDisconnected(_ service: USBService)
+        case deviceDisconnected(_ reference: DeviceReference)
     }
 }
 

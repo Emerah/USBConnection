@@ -41,12 +41,11 @@ Task {
         for try await event in stream {
             switch event {
             case .deviceConnected(let service):
-                print("Connected:", service.name ?? "USB Device",
-                      "vendor:", service.vendorID ?? 0,
-                      "product:", service.productID ?? 0)
+                print("Connected:", service.registryID ?? 0,
+                      "service:", service.service)
 
             case .deviceDisconnected(let service):
-                print("Disconnected:", service.name ?? "USB Device")
+                print("Disconnected:", service.registryID ?? 0)
             }
         }
     } catch {
@@ -59,20 +58,24 @@ Keep a strong reference to `manager` for as long as you want to receive events.
 
 ## Filter to a specific device
 
-Use vendor and product IDs to limit notifications:
+Use vendor/product IDs and optional product/manufacturer/serial strings to limit notifications:
 
 ```swift
 import USBConnection
 
 // Example: Apple Magic Keyboard (replace with your device IDs)
-let criteria = USBDeviceMatchingCriteria(vendorID: 0x05AC, productID: 0x024F)
-let manager = USBConnectionManager(matchingCriteria: criteria)
+let criteria = USBConnectionManager.DeviceMatchingCriteria(
+    vendorID: 0x05AC,
+    productID: 0x024F,
+    productName: "Magic Keyboard"
+)
+let manager = USBConnectionManager()
 
 Task {
-    let stream = try await manager.monitorDevices()
+    let stream = try await manager.monitorDevices(matchingCriteria: criteria)
     for try await event in stream {
         if case .deviceConnected(let service) = event {
-            print("Matched device:", service.name ?? "Unknown")
+            print("Matched device:", service.registryID ?? 0)
         }
     }
 }
@@ -98,16 +101,16 @@ If the consumer finishes or cancels the stream, the actor also cleans up automat
 ## What the API provides
 
 - `USBConnectionManager`: actor that owns IOKit callbacks and the stream lifecycle.
-- `monitorDevices()`: starts monitoring and returns `AsyncThrowingStream<USBConnectionNotification, Error>`.
-- `USBConnectionNotification`: `.deviceConnected(USBService)` and `.deviceDisconnected(USBService)`.
-- `USBService`: retained `io_service_t` handle with parsed `vendorID`, `productID`, and `name` when available.
-- `USBDeviceMatchingCriteria`: vendor/product filter for targeted monitoring.
+- `monitorDevices(matchingCriteria:)`: starts monitoring and returns `AsyncThrowingStream<USBConnectionManager.Notification, Error>`.
+- `Notification`: `.deviceConnected(DeviceReference)` and `.deviceDisconnected(DeviceReference)`.
+- `DeviceReference`: retained `io_service_t` handle with an optional `registryID`.
+- `DeviceMatchingCriteria`: vendor/product filter with optional product/manufacturer/serial strings.
 - Errors (`USBConnectionError`): invalid continuation, duplicate monitoring, missing IOKit objects, or kernel status failures.
 
 ## Tips and troubleshooting
 
 - Events are delivered on an internal queue; the actor ensures thread safety.
-- Metadata fields (`vendorID`, `productID`, `name`) are optional—IOKit may not expose them for every device.
+- `DeviceReference` does not parse metadata; query the IOKit registry if you need names or IDs.
 - Logging uses `USBLogger` and only prints in `DEBUG` builds.
 - If you see `monitoringAlreadyStarted`, call `endMonitoringActivity()` before starting again.
 - App sandboxing: if you sandbox your app, ensure it can access USB devices; entitlement requirements vary by app type.
@@ -117,5 +120,5 @@ If the consumer finishes or cancels the stream, the actor also cleans up automat
 1. Import `USBConnection` and hold a `USBConnectionManager` strongly.
 2. Call `monitorDevices()` from an async context and iterate the returned stream.
 3. Handle `.deviceConnected` and `.deviceDisconnected` cases.
-4. Optionally provide `USBDeviceMatchingCriteria` to filter events.
+4. Optionally provide `DeviceMatchingCriteria` to filter events (vendor/product plus optional product/manufacturer/serial strings).
 5. Call `endMonitoringActivity()` when finished (or on teardown).
