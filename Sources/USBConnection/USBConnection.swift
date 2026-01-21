@@ -381,13 +381,13 @@ extension USBConnection.USBConnectionManager {
 
             switch event {
                 case .connected:
-                    let usbService = DeviceReference(service)
+                    let reference = DeviceReference(service)
                     USBLogger.info("\(#function) device connected: service \(service)")
-                    continuation.yield(.deviceConnected(usbService)) 
+                    continuation.yield(.deviceConnected(reference)) 
                 case .disconnected:
-                    let usbService = DeviceReference(service)
+                    let reference = DeviceReference(service)
                     USBLogger.info("\(#function) device disconnected: service \(service)")
-                    continuation.yield(.deviceDisconnected(usbService)) 
+                    continuation.yield(.deviceDisconnected(reference)) 
             }
             
             releaseIOObject(service)
@@ -586,7 +586,7 @@ extension USBConnection.USBConnectionManager {
 extension USBConnection {
     /// Errors that can occur while configuring or running USB monitoring.
     /// - Discussion: Thrown by monitoring APIs to describe setup or runtime failures.
-    public enum USBConnectionError: Error {
+    public enum USBConnectionError: Error, LocalizedError {
         /// Monitoring was requested while already active.
         case monitoringAlreadyStarted
         /// The stream continuation could not be obtained.
@@ -599,38 +599,33 @@ extension USBConnection {
         case matchingDictionaryUnavailable
         /// Adding a matching notification failed with a kernel status code.
         case addingNotificationFailed(_ status: kern_return_t)
-    }
-}
-
-// MARK: - LOCALIZED ERROR
-extension USBConnection.USBConnectionError: LocalizedError {
-    /// Human-readable error description.
-    /// - Returns: A localized description for the specific error.
-    /// - Discussion: Useful for surfacing errors directly to users or logs.
-    public var errorDescription: String? {
-        switch self {
-            case .monitoringAlreadyStarted:
-                return "Monitoring is already active."
-            case .invalidContinuation:
-                return "Unable to start monitoring because the stream continuation is invalid."
-            case .invalidNotificationName:
-                return "The provided notification name is invalid."
-            case .notificationPortUnavailable:
-                return "Unable to create a notification port for USB events."
-            case .matchingDictionaryUnavailable:
-                return "Unable to create a matching dictionary for USB device notifications."
-            case .addingNotificationFailed(let status):
-                return "Failed to add a USB notification with kernel status \(status)."
+        
+        /// Human-readable error description.
+        /// - Returns: A localized description for the specific error.
+        /// - Discussion: Useful for surfacing errors directly to users or logs.
+        public var errorDescription: String? {
+            switch self {
+                case .monitoringAlreadyStarted:
+                    return "Monitoring is already active."
+                case .invalidContinuation:
+                    return "Unable to start monitoring because the stream continuation is invalid."
+                case .invalidNotificationName:
+                    return "The provided notification name is invalid."
+                case .notificationPortUnavailable:
+                    return "Unable to create a notification port for USB events."
+                case .matchingDictionaryUnavailable:
+                    return "Unable to create a matching dictionary for USB device notifications."
+                case .addingNotificationFailed(let status):
+                    return "Failed to add a USB notification with kernel status \(status)."
+            }
         }
-    }
-}
-
-extension USBConnection.USBConnectionError {
-    /// Non-localized error descriptor fallback.
-    /// - Returns: A description of the error suitable for logging.
-    /// - Discussion: Provides a consistent string even when `errorDescription` is unavailable.
-    public var errorDescriptor: String {
-        errorDescription ?? "Unknown USB connection error."
+        
+        /// Non-localized error descriptor fallback.
+        /// - Returns: A description of the error suitable for logging.
+        /// - Discussion: Provides a consistent string even when `errorDescription` is unavailable.
+        public var errorDescriptor: String {
+            errorDescription ?? "Unknown USB connection error."
+        }
     }
 }
 
