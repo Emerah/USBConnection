@@ -5,7 +5,7 @@ import PackageDescription
 
 let package = Package(
     name: "USBConnection",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v13)],
     products: [.library(name: "USBConnection", targets: ["USBConnection"])],
     targets: [
         .target(
