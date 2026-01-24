@@ -10,7 +10,7 @@ Lightweight Swift package for observing USB plug and unplug events on macOS. It 
 Add the package to your `Package.swift` dependencies:
 
 ```swift
-// swift-tools-version: 6.0
+// swift-tools-version: 5.10
 dependencies: [
     .package(url: "https://github.com/Emerah/USBConnection.git", branch: "main")
 ]
