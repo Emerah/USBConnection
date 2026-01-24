@@ -91,7 +91,7 @@ extension USBConnection.USBConnectionManager {
     /// - Returns: An async throwing stream that yields `Notification` events.
     /// - Throws: `USBConnectionError` when monitoring cannot be started.
     /// - Discussion: Call this from an async context to begin observing USB plug and unplug events. Keep the returned stream alive for the lifetime of your observation. Invoke `endMonitoringActivity()` when you no longer need notifications.
-    public func monitorDevices(matchingCriteria: DeviceMatchingCriteria? = nil) async throws -> USBConnectionStream {
+    public func monitorDevices(matchingCriteria: DeviceMatchingCriteria? = nil) throws -> USBConnectionStream {
         self.deviceMatchingCriteria = matchingCriteria
         var tempContinuation: USBConnectionStream.Continuation?
         let stream = USBConnectionStream(bufferingPolicy: .bufferingOldest(64)) { tempContinuation = $0 }
@@ -102,7 +102,7 @@ extension USBConnection.USBConnectionManager {
             throw error
         }
 
-        try await startMonitoringDevices(continuation: continuation)
+        try startMonitoringDevices(continuation: continuation)
         return stream
     }
 
@@ -124,7 +124,7 @@ extension USBConnection.USBConnectionManager {
     /// - Parameter continuation: Continuation used to emit connection notifications.
     /// - Throws: `USBConnectionError` when monitoring setup fails.
     /// - Discussion: This internal helper wires up the notification port, registers iterators, and hooks termination handling before emitting events into the stream.
-    private func startMonitoringDevices(continuation: USBConnectionStream.Continuation) async throws {
+    private func startMonitoringDevices(continuation: USBConnectionStream.Continuation) throws {
         
         guard !isMonitoring else {
             let error = USBConnectionError.monitoringAlreadyStarted
