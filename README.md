@@ -1,7 +1,7 @@
 # USBConnection
 Lightweight Swift package for observing USB plug and unplug events on macOS. It wraps IOKit notifications behind a Swift Concurrency API so you can handle connection changes with an `AsyncThrowingStream` and optional vendor/product filtering.
 
-- macOS 15.0+
+- macOS 13.0+
 - Swift Package Manager
 - Uses IOKit under the hood; no polling
 
